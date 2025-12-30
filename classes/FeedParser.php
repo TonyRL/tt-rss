@@ -24,6 +24,48 @@ class FeedParser {
 	const FEED_RSS = 1;
 	const FEED_ATOM = 2;
 
+	/**
+	 * Normalize XML namespaces by removing duplicate declarations
+	 * Handles malformed feeds with redefined xmlns attributes
+	 * @return string - namespace-normalized XML
+	 */
+	private function normalize_namespaces(string $data): string {
+		// Find and process all xmlns declarations to remove duplicates
+		$seen_namespaces = [];
+		$result_data = $data;
+
+		// Match all xmlns declarations in the entire document
+		if (preg_match_all('/xmlns(?::([a-z0-9_-]+))?\\s*=\\s*["\']([^"\']*)["\']*/i', $data, $ns_matches, PREG_OFFSET_CAPTURE | PREG_SET_ORDER)) {
+			// Process matches in reverse order to maintain correct offsets for replacement
+			$matches_to_remove = [];
+
+			foreach ($ns_matches as $ns_match) {
+				$full_match = $ns_match[0][0];
+				$prefix = $ns_match[1][0] ?? ''; // Empty for default namespace
+				$uri = $ns_match[2][0];
+				$key = $prefix . '=' . $uri; // Create unique key
+
+				if (isset($seen_namespaces[$key])) {
+					// This is a duplicate - mark for removal
+					$matches_to_remove[] = [
+						'offset' => $ns_match[0][1],
+						'length' => strlen($full_match)
+					];
+				} else {
+					$seen_namespaces[$key] = true;
+				}
+			}
+
+			// Remove duplicates in reverse order (to maintain offsets)
+			usort($matches_to_remove, fn($a, $b) => $b['offset'] <=> $a['offset']);
+			foreach ($matches_to_remove as $match) {
+				$result_data = substr_replace($result_data, '', $match['offset'], $match['length']);
+			}
+		}
+
+		return $result_data;
+	}
+
 	function __construct(string $data) {
 		libxml_use_internal_errors(true);
 		libxml_clear_errors();
@@ -35,6 +77,10 @@ class FeedParser {
 			$this->error = 'Empty feed data provided';
 			return;
 		}
+
+		// Remove duplicate namespace declarations to handle malformed feeds
+		$data = $this->normalize_namespaces($data);
+
 		$this->doc->loadXML($data);
 
 		mb_substitute_character("none");
